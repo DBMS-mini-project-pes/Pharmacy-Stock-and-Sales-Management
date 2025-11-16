@@ -1,4 +1,3 @@
-
 # frontend_pharmacy_with_privileges.py
 # Full Pharmacy Management System with Role-Based Access Control (RBAC)
 # Integrated login system with privilege management
@@ -1597,3 +1596,4 @@ class PharmacyApp(tk.Tk):
 if __name__ == "__main__":
     login = LoginWindow()
     login.mainloop()
+
