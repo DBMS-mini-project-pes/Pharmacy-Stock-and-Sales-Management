@@ -1,3 +1,4 @@
+
 # frontend_pharmacy_with_privileges.py
 # Full Pharmacy Management System with Role-Based Access Control (RBAC)
 # Integrated login system with privilege management
@@ -12,7 +13,7 @@ from datetime import datetime, date, timedelta
 DB_CONFIG = {
     "host": "localhost",
     "user": "root",
-    "password": "ystudy345",
+    "password": "your password",
     "database": "PharmacyDB",
     "port": 3306
 }
@@ -1366,8 +1367,233 @@ class PharmacyApp(tk.Tk):
             messagebox.showwarning("Permission Denied", "You don't have permission to delete prescriptions")
             return
     
-        sel = self.pres_t
+        sel = self.pres_tree.selection()
+        if not sel:
+            messagebox.showwarning("Select","Select prescription to delete"); return
+        pid = self.pres_tree.item(sel[0])['values'][0]
+        if messagebox.askyesno("Confirm",f"Delete prescription {pid}?"):
+            # First delete all prescribed drugs
+            run_query("DELETE FROM PRESCRIBED_DRUG WHERE PresID=%s",(pid,))
+            # Then delete the prescription
+            run_query("DELETE FROM PRESCRIPTION WHERE PresID=%s",(pid,))
+            self.load_prescriptions()
+            self.pd_tree.delete(*self.pd_tree.get_children())
 
+    # ---------------- Notifications ----------------
+    def create_notifications_tab(self):
+        frame = ttk.Frame(self.nb)
+        self.nb.add(frame, text="Notifications")
+        top = ttk.Frame(frame); top.pack(fill="x", padx=8, pady=6)
+        ttk.Button(top, text="Reload", command=self.load_notifications).pack(side="left", padx=4)
+        
+        if self.check_permission("add"):
+            ttk.Button(top, text="Add Notification", command=self.add_notification_dialog).pack(side="left", padx=4)
+        if self.check_permission("delete"):
+            ttk.Button(top, text="Delete Selected", command=self.delete_notification_selected).pack(side="left", padx=4)
+
+        cols = ("NID","Type","Message")
+        self.notif_tree = ttk.Treeview(frame, columns=cols, show="headings", height=16)
+        for c in cols:
+            self.notif_tree.heading(c, text=c)
+            self.notif_tree.column(c, width=140)
+        self.notif_tree.pack(fill="both", expand=True, padx=8, pady=6)
+
+        bottom = ttk.Frame(frame)
+        bottom.pack(fill="x", padx=8, pady=6)
+        ttk.Label(bottom, text="EmpID to mark seen:").pack(side="left", padx=(0,6))
+        self.mark_emp_entry = ttk.Entry(bottom, width=10)
+        self.mark_emp_entry.pack(side="left")
+        ttk.Button(bottom, text="Mark Selected Seen", command=self.mark_selected_notification_seen_dialog).pack(side="left", padx=6)
+
+        self.load_notifications()
+
+    def load_notifications(self):
+        if not hasattr(self, 'notif_tree'):
+            return
+        rows = run_select("SELECT NID, Type, Message FROM NOTIFICATION ORDER BY NID DESC")
+        self.notif_tree.delete(*self.notif_tree.get_children())
+        for r in rows:
+            self.notif_tree.insert("", "end", values=r)
+        self.append_log(f"Loaded {len(rows)} notifications")
+
+    def add_notification_dialog(self):
+        if not self.check_permission("add"):
+            messagebox.showwarning("Permission Denied", "You don't have permission to add notifications")
+            return
+        
+        dlg = tk.Toplevel(self); dlg.title("Add Notification")
+        labels = ["Type","Message"]
+        entries={}
+        for i,l in enumerate(labels):
+            ttk.Label(dlg, text=l).grid(row=i, column=0, sticky="w", padx=6, pady=4)
+            e=ttk.Entry(dlg, width=40); e.grid(row=i, column=1, padx=6, pady=4)
+            entries[l]=e
+        
+        def submit():
+            ntype = entries["Type"].get().strip() or None
+            msg = entries["Message"].get().strip() or None
+            if not msg:
+                messagebox.showwarning("Input","Message required"); return
+            nid = get_next_nid()
+            q = "INSERT INTO NOTIFICATION (NID, Type, Message) VALUES (%s,%s,%s)"
+            if run_query(q, (nid, ntype, msg)):
+                messagebox.showinfo("Added","Notification added"); dlg.destroy(); self.load_notifications()
+                self.append_log(f"Notification {nid} created")
+        ttk.Button(dlg, text="Add", command=submit).grid(row=len(labels), column=0, columnspan=2, pady=8)
+
+    def delete_notification_selected(self):
+        if not self.check_permission("delete"):
+            messagebox.showwarning("Permission Denied", "You don't have permission to delete notifications")
+            return
+        
+        sel = self.notif_tree.selection()
+        if not sel:
+            messagebox.showwarning("Select","Select notification to delete"); return
+        nid = self.notif_tree.item(sel[0])['values'][0]
+        if messagebox.askyesno("Confirm", f"Delete notification {nid}?"):
+            if run_query("DELETE FROM NOTIFICATION WHERE NID=%s", (nid,)):
+                messagebox.showinfo("Deleted","Notification deleted"); self.load_notifications()
+
+    def mark_selected_notification_seen_dialog(self):
+        sel = self.notif_tree.selection()
+        if not sel:
+            messagebox.showwarning("Select", "Select a notification to mark as seen")
+            return
+        nid = self.notif_tree.item(sel[0])['values'][0]
+        empid = self.mark_emp_entry.get().strip()
+        if not empid:
+            messagebox.showwarning("Input", "Enter EmpID to mark as seen")
+            return
+        existing = run_select("SELECT 1 FROM IS_NOTIFIED WHERE NID=%s AND EmpID=%s", (nid, empid))
+        if existing:
+            messagebox.showinfo("Already Seen", f"Notification {nid} already marked seen by {empid}")
+            return
+        ok = run_query("INSERT INTO IS_NOTIFIED (EmpID, NID) VALUES (%s,%s)", (empid, nid))
+        if ok:
+            messagebox.showinfo("Marked", f"Notification {nid} marked seen by {empid}")
+            self.append_log(f"Notification {nid} seen by EmpID {empid}")
+
+    # ---------------- Queries ----------------
+    def create_queries_tab(self):
+        frame = ttk.Frame(self.nb)
+        self.nb.add(frame, text="Queries")
+        top = ttk.Frame(frame); top.pack(fill="x", padx=8, pady=6)
+        ttk.Label(top, text="Pre-built queries:").pack(side="left", padx=6)
+        self.query_combo = ttk.Combobox(top, values=[
+            "All medicines expiring within WARN_DAYS",
+            "Join: Orders with Customer & Total",
+            "Aggregate: Stock per Supplier",
+            "Nested: Customers with insurance active (nested subquery)",
+            "Function: TotalStockValue()",
+            "Function: IsExpired(batch, name) (example B002, Amoxicillin)",
+            "IS_NOTIFIED: Who has seen which notifications",  
+            "Insurance: All active insurances with customer details"  
+        ], state="readonly", width=50)
+        self.query_combo.pack(side="left", padx=6)
+        ttk.Button(top, text="Run", command=self.run_selected_query).pack(side="left", padx=6)
+        ttk.Button(top, text="Run Custom SQL", command=self.run_custom_query_dialog).pack(side="left", padx=6)
+
+        self.query_res_tree = None
+        self.query_text = tk.Text(frame, height=12, state="disabled")
+        self.query_text.pack(fill="both", expand=True, padx=8, pady=8)
+
+    def run_selected_query(self):
+        qname = self.query_combo.get()
+        if not qname:
+            messagebox.showwarning("Select", "Select a query"); return
+        self.query_text.config(state="normal"); self.query_text.delete("1.0", "end")
+        if qname == "All medicines expiring within WARN_DAYS":
+            q = "SELECT BatchNo, DrugName, ExpiryDate, Stock_quantity FROM MEDICINE WHERE ExpiryDate <= %s"
+            warn_until = (date.today() + timedelta(days=self.WARN_DAYS)).strftime("%Y-%m-%d")
+            cols, rows = run_select_with_cols(q, (warn_until,))
+            self._display_query_results(cols, rows)
+        elif qname == "Join: Orders with Customer & Total":
+            q = """SELECT o.OrderID, o.OrderDate, c.Cname,
+                          IFNULL(SUM(od.Ordered_quantity * od.Price),0) AS OrderTotal
+                   FROM `ORDER` o
+                   LEFT JOIN CUSTOMER c ON o.Cid = c.Cid
+                   LEFT JOIN ORDERED_DRUG od ON o.OrderID = od.OrderID
+                   GROUP BY o.OrderID, o.OrderDate, c.Cname"""
+            cols, rows = run_select_with_cols(q)
+            self._display_query_results(cols, rows)
+        elif qname == "Aggregate: Stock per Supplier":
+            q = """SELECT s.SupID, s.SupName, IFNULL(SUM(m.Stock_quantity),0) AS TotalStock
+                   FROM SUPPLIER s
+                   LEFT JOIN MEDICINE m ON s.SupID = m.SupID
+                   GROUP BY s.SupID, s.SupName"""
+            cols, rows = run_select_with_cols(q)
+            self._display_query_results(cols, rows)
+        elif qname == "Nested: Customers with insurance active (nested subquery)":
+            q = """SELECT Cid, Cname FROM CUSTOMER
+                   WHERE InsuranceID IN (
+                        SELECT InsuranceID FROM INSURANCE WHERE EndDate >= CURDATE()
+                   )"""
+            cols, rows = run_select_with_cols(q)
+            self._display_query_results(cols, rows)
+        elif qname == "Function: TotalStockValue()":
+            cols, rows = run_select_with_cols("SELECT TotalStockValue() AS TotalStockValue")
+            self._display_query_results(cols, rows)
+        elif qname.startswith("Function: IsExpired"):
+            rows = run_select("SELECT IsExpired(%s,%s) AS IsExpired", ("B002","Amoxicillin"))
+            self.query_text.insert("end", "IsExpired Result (0=Not Expired, 1=Expired)\n")
+            self.query_text.insert("end", "-" * 40 + "\n")
+            if rows:
+                result = rows[0][0]
+                status = "EXPIRED" if result == 1 else "NOT EXPIRED"
+                self.query_text.insert("end", f"Medicine B002-Amoxicillin: {status} (Value: {result})\n")
+            else:
+                self.query_text.insert("end", "No result returned\n")
+        elif qname == "IS_NOTIFIED: Who has seen which notifications":
+            q = """SELECT i.EmpID, e.Ename, i.NID, n.Type, n.Message
+               FROM IS_NOTIFIED i
+               LEFT JOIN EMPLOYEE e ON i.EmpID = e.EmpID
+               LEFT JOIN NOTIFICATION n ON i.NID = n.NID
+               ORDER BY i.NID DESC"""
+            cols, rows = run_select_with_cols(q)
+            self._display_query_results(cols, rows)
+        elif qname == "Insurance: All active insurances with customer details":
+            q = """SELECT i.InsuranceID, i.StartDate, i.EndDate,
+                  COUNT(c.Cid) AS CustomerCount,
+                  GROUP_CONCAT(c.Cname SEPARATOR ', ') AS Customers
+                FROM INSURANCE i
+                LEFT JOIN CUSTOMER c ON i.InsuranceID = c.InsuranceID
+                GROUP BY i.InsuranceID, i.StartDate, i.EndDate
+                ORDER BY i.EndDate DESC"""
+            cols, rows = run_select_with_cols(q)
+            self._display_query_results(cols, rows)
+        else:
+            self.query_text.insert("end", "Unknown query selected.")
+        self.query_text.config(state="disabled")
+
+    def run_custom_query_dialog(self):
+        dlg = tk.Toplevel(self); dlg.title("Run Custom SQL (SELECT only)")
+        ttk.Label(dlg, text="Enter a SELECT query:").grid(row=0, column=0, sticky="w", padx=6, pady=6)
+        txt = tk.Text(dlg, height=8, width=80)
+        txt.grid(row=1, column=0, padx=6, pady=6)
+        def runit():
+            q = txt.get("1.0", "end").strip()
+            if not q.lower().startswith("select"):
+                messagebox.showwarning("Only SELECT", "Only SELECT queries are allowed here."); return
+            cols, rows = run_select_with_cols(q)
+            self._display_query_results(cols, rows)
+            dlg.destroy()
+        ttk.Button(dlg, text="Run", command=runit).grid(row=2, column=0, pady=6)
+
+    def _display_query_results(self, cols, rows):
+        self.query_text.config(state="normal")
+        self.query_text.delete("1.0", "end")
+        if not cols:
+            self.query_text.insert("end", "No columns/rows returned or error.\n")
+            return
+        header = " | ".join(cols)
+        self.query_text.insert("end", header + "\n")
+        self.query_text.insert("end", "-" * len(header) + "\n")
+        for r in rows:
+            row_s = " | ".join(str(item) for item in r)
+            self.query_text.insert("end", row_s + "\n")
+        self.query_text.config(state="disabled")
+
+# ---------- MAIN ENTRY POINT ----------
 if __name__ == "__main__":
     login = LoginWindow()
     login.mainloop()
